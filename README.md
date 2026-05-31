@@ -366,6 +366,19 @@ kubectl describe hpa
 
 # Description VPA
 kubectl describe vpa
+
+kubectl expose deployment/kubernetes-bootcamp --type="LoadBalancer" --port 8080
+
+kubectl get deployments
+
+kubectl get rs
+
+kubectl scale deployments/kubernetes-bootcamp --replicas=4
+
+kubectl get pods -o wide
+
+kubectl describe deployments/kubernetes-bootcamp
+
 ```
 
 ---
