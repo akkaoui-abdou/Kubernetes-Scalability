@@ -746,3 +746,502 @@ Ils complètent parfaitement :
 
 et constituent aujourd'hui une bonne pratique pour toute application Kubernetes nécessitant une haute disponibilité.
 
+
+---
+
+# 5. Pod Anti-Affinity
+
+## Définition
+
+Le mécanisme de **Pod Anti-Affinity** empêche Kubernetes de placer plusieurs Pods d'une même application sur le même nœud ou dans la même zone.
+
+L'objectif est de réduire le risque qu'une panne d'infrastructure affecte simultanément plusieurs réplicas d'une application.
+
+---
+
+## Pourquoi utiliser Pod Anti-Affinity ?
+
+### Sans Anti-Affinity
+
+```text
+Node-A
+├── Pod-1
+├── Pod-2
+└── Pod-3
+
+Node-B
+└── Aucun Pod
+```
+
+Si le Node-A tombe :
+
+```text
+❌ Tous les Pods disparaissent
+❌ Service indisponible
+```
+
+---
+
+### Avec Anti-Affinity
+
+```text
+Node-A
+└── Pod-1
+
+Node-B
+└── Pod-2
+
+Node-C
+└── Pod-3
+```
+
+Si un Node tombe :
+
+```text
+✔ Les autres Pods continuent à fonctionner
+```
+
+---
+
+## Exemple de configuration
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+
+metadata:
+  name: nginx-ha
+
+spec:
+  replicas: 3
+
+  selector:
+    matchLabels:
+      app: nginx-ha
+
+  template:
+    metadata:
+      labels:
+        app: nginx-ha
+
+    spec:
+
+      affinity:
+        podAntiAffinity:
+
+          requiredDuringSchedulingIgnoredDuringExecution:
+
+          - labelSelector:
+              matchExpressions:
+              - key: app
+                operator: In
+                values:
+                - nginx-ha
+
+            topologyKey: kubernetes.io/hostname
+
+      containers:
+      - name: nginx
+        image: nginx:latest
+```
+
+---
+
+## Modes disponibles
+
+### requiredDuringSchedulingIgnoredDuringExecution
+
+```yaml
+requiredDuringSchedulingIgnoredDuringExecution
+```
+
+Contrainte obligatoire.
+
+Si aucun Node ne respecte la règle :
+
+```text
+Pod = Pending
+```
+
+---
+
+### preferredDuringSchedulingIgnoredDuringExecution
+
+```yaml
+preferredDuringSchedulingIgnoredDuringExecution
+```
+
+Contrainte préférée mais non obligatoire.
+
+Le Scheduler essaie de la respecter.
+
+---
+
+## Cas d'usage
+
+- Applications critiques
+- API stateless
+- Microservices
+- Frontaux web
+
+---
+
+# 6. PodDisruptionBudget (PDB)
+
+## Définition
+
+Le **PodDisruptionBudget (PDB)** protège une application contre les interruptions volontaires.
+
+Exemples :
+
+- Drain d'un Node
+- Upgrade du cluster
+- Maintenance
+- Mise à jour d'un Node Pool
+
+Le PDB garantit qu'un nombre minimum de Pods reste disponible.
+
+---
+
+## Pourquoi utiliser un PDB ?
+
+### Sans PDB
+
+```text
+Deployment : 3 Pods
+
+Maintenance Node
+       │
+       ▼
+
+Pod-1 supprimé
+Pod-2 supprimé
+Pod-3 supprimé
+```
+
+Résultat :
+
+```text
+❌ Application indisponible
+```
+
+---
+
+### Avec PDB
+
+```text
+Deployment : 3 Pods
+
+PDB :
+minAvailable: 2
+```
+
+Résultat :
+
+```text
+✔ Au moins 2 Pods restent disponibles
+```
+
+---
+
+## Exemple
+
+```yaml
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+
+metadata:
+  name: nginx-pdb
+
+spec:
+
+  minAvailable: 2
+
+  selector:
+    matchLabels:
+      app: nginx-ha
+```
+
+---
+
+## Alternative : maxUnavailable
+
+```yaml
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+
+metadata:
+  name: nginx-pdb
+
+spec:
+
+  maxUnavailable: 1
+
+  selector:
+    matchLabels:
+      app: nginx-ha
+```
+
+---
+
+## Comparaison
+
+### minAvailable
+
+```yaml
+minAvailable: 2
+```
+
+Toujours conserver au moins 2 Pods.
+
+---
+
+### maxUnavailable
+
+```yaml
+maxUnavailable: 1
+```
+
+Autoriser au maximum 1 Pod indisponible.
+
+---
+
+## Vérification
+
+```bash
+kubectl get pdb
+
+kubectl describe pdb nginx-pdb
+```
+
+---
+
+## Cas d'usage
+
+- Applications critiques
+- API de production
+- Bases de données distribuées
+- Applications HA
+
+---
+
+# 7. Multi-AZ Deployment
+
+## Définition
+
+Un déploiement **Multi-AZ (Availability Zone)** consiste à répartir les Pods sur plusieurs zones géographiques d'une même région Cloud.
+
+Exemples :
+
+```text
+eu-west-1a
+eu-west-1b
+eu-west-1c
+```
+
+ou
+
+```text
+westeurope-1
+westeurope-2
+westeurope-3
+```
+
+---
+
+## Pourquoi utiliser plusieurs AZ ?
+
+Une panne complète d'une zone ne doit pas rendre l'application indisponible.
+
+---
+
+### Déploiement Mono-AZ
+
+```text
+Zone-A
+
+Node-1
+Node-2
+Node-3
+
+Pods
+Pods
+Pods
+```
+
+Si la zone tombe :
+
+```text
+❌ Application indisponible
+```
+
+---
+
+### Déploiement Multi-AZ
+
+```text
+Zone-A
+├── Pod-1
+├── Pod-2
+
+Zone-B
+├── Pod-3
+├── Pod-4
+
+Zone-C
+├── Pod-5
+├── Pod-6
+```
+
+Si la Zone-B tombe :
+
+```text
+✔ Les Pods des autres zones continuent
+```
+
+---
+
+## Exemple avec topologySpreadConstraints
+
+```yaml
+topologySpreadConstraints:
+
+- maxSkew: 1
+
+  topologyKey: topology.kubernetes.io/zone
+
+  whenUnsatisfiable: DoNotSchedule
+
+  labelSelector:
+    matchLabels:
+      app: nginx-ha
+```
+
+---
+
+## Architecture recommandée
+
+```text
+                    Internet
+                        │
+                        ▼
+
+                 Load Balancer
+
+                        │
+                        ▼
+
+                    Service
+
+                        │
+                        ▼
+
+                  Deployment
+
+                        │
+                        ▼
+
+                        HPA
+
+                        │
+                        ▼
+
+            TopologySpreadConstraints
+
+                        │
+
+      ┌─────────────────┼─────────────────┐
+      ▼                 ▼                 ▼
+
+   Zone-A            Zone-B            Zone-C
+
+   Node-1            Node-3            Node-5
+   Node-2            Node-4            Node-6
+
+   2 Pods            2 Pods            2 Pods
+```
+
+---
+
+## Architecture Kubernetes HA recommandée
+
+Pour une application de production :
+
+### Scalabilité
+
+- Horizontal Pod Autoscaler (HPA)
+- Cluster Autoscaler
+
+### Haute Disponibilité
+
+- TopologySpreadConstraints
+- Pod Anti-Affinity
+- PodDisruptionBudget
+- Multi-AZ Deployment
+
+### Résultat
+
+```text
+                     Utilisateurs
+                            │
+                            ▼
+
+                     Load Balancer
+                            │
+                            ▼
+
+                        Service
+                            │
+                            ▼
+
+                       Deployment
+                            │
+                            ▼
+
+                           HPA
+                            │
+                            ▼
+
+              TopologySpreadConstraints
+                            │
+
+             Pod Anti-Affinity Rules
+                            │
+
+      ┌─────────────────────┼─────────────────────┐
+      ▼                     ▼                     ▼
+
+   Zone-A                Zone-B                Zone-C
+
+ Node-1 Node-2       Node-3 Node-4       Node-5 Node-6
+
+    2 Pods              2 Pods              2 Pods
+
+                            │
+                            ▼
+
+                    PodDisruptionBudget
+
+                            │
+                            ▼
+
+                    Cluster Autoscaler
+```
+
+---
+
+# Conclusion
+
+Pour une plateforme Kubernetes de production, les composants se complètent :
+
+| Fonction | Composant |
+|-----------|------------|
+| Scalabilité horizontale | HPA |
+| Scalabilité verticale | VPA |
+| Ajout de Nodes | Cluster Autoscaler |
+| Répartition équilibrée | TopologySpreadConstraints |
+| Séparation des Pods | Pod Anti-Affinity |
+| Protection pendant la maintenance | PodDisruptionBudget |
+| Résilience infrastructure | Multi-AZ Deployment |
+
+La combinaison de ces mécanismes permet de construire une plateforme Kubernetes hautement disponible, résiliente et capable de monter en charge automatiquement.
