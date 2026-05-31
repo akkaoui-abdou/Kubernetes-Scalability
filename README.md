@@ -384,3 +384,365 @@ HPA + Cluster Autoscaler
 ```
 
 est généralement la stratégie la plus utilisée pour garantir performance, disponibilité et optimisation des coûts.
+
+
+
+---
+
+# 4. Topology Spread Constraints
+
+## Définition
+
+Les `topologySpreadConstraints` permettent de contrôler la répartition des Pods dans le cluster Kubernetes.
+
+L'objectif est d'éviter que tous les Pods d'une même application soient placés sur :
+
+- Le même Node
+- La même Zone de disponibilité (Availability Zone)
+- Le même Rack
+- Ou toute autre topologie définie par un label
+
+Cela améliore :
+
+- La haute disponibilité (HA)
+- La résilience aux pannes
+- L'équilibrage de charge
+- La tolérance aux défaillances d'infrastructure
+
+---
+
+## Pourquoi utiliser topologySpreadConstraints ?
+
+### Sans topologySpreadConstraints
+
+```text
+Node-A
+├── Pod-1
+├── Pod-2
+├── Pod-3
+└── Pod-4
+
+Node-B
+└── Aucun Pod
+
+Node-C
+└── Aucun Pod
+```
+
+Si le Node-A tombe :
+
+```text
+❌ Tous les Pods sont perdus
+❌ Service indisponible
+```
+
+---
+
+### Avec topologySpreadConstraints
+
+```text
+Node-A
+├── Pod-1
+└── Pod-2
+
+Node-B
+├── Pod-3
+└── Pod-4
+
+Node-C
+└── Pod-5
+```
+
+Si un Node tombe :
+
+```text
+✔ Les autres Pods continuent de servir le trafic
+✔ Haute disponibilité
+```
+
+---
+
+## Exemple de configuration
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+
+metadata:
+  name: nginx-ha
+
+spec:
+  replicas: 6
+
+  selector:
+    matchLabels:
+      app: nginx-ha
+
+  template:
+    metadata:
+      labels:
+        app: nginx-ha
+
+    spec:
+
+      topologySpreadConstraints:
+
+      - maxSkew: 1
+
+        topologyKey: kubernetes.io/hostname
+
+        whenUnsatisfiable: DoNotSchedule
+
+        labelSelector:
+          matchLabels:
+            app: nginx-ha
+
+      containers:
+      - name: nginx
+        image: nginx:latest
+```
+
+---
+
+## Explication des paramètres
+
+### maxSkew
+
+Définit l'écart maximal autorisé entre les domaines de topologie.
+
+```yaml
+maxSkew: 1
+```
+
+Exemple valide :
+
+```text
+Node-A : 3 Pods
+Node-B : 2 Pods
+Node-C : 2 Pods
+```
+
+Écart maximal = 1
+
+---
+
+### topologyKey
+
+Détermine le critère de répartition.
+
+```yaml
+topologyKey: kubernetes.io/hostname
+```
+
+Répartition par Node.
+
+Autres valeurs fréquentes :
+
+```yaml
+topology.kubernetes.io/zone
+```
+
+Répartition par Zone AWS/Azure/GCP.
+
+```yaml
+topology.kubernetes.io/region
+```
+
+Répartition par Région.
+
+---
+
+### whenUnsatisfiable
+
+Détermine le comportement lorsque la contrainte ne peut pas être respectée.
+
+#### DoNotSchedule
+
+```yaml
+whenUnsatisfiable: DoNotSchedule
+```
+
+Le Pod ne sera pas créé tant qu'un placement équilibré n'est pas possible.
+
+#### ScheduleAnyway
+
+```yaml
+whenUnsatisfiable: ScheduleAnyway
+```
+
+Le Scheduler tente d'équilibrer mais accepte un déséquilibre si nécessaire.
+
+---
+
+### labelSelector
+
+Indique quels Pods doivent être pris en compte pour le calcul.
+
+```yaml
+labelSelector:
+  matchLabels:
+    app: nginx-ha
+```
+
+---
+
+## Répartition par Zone de disponibilité
+
+Exemple pour un cluster multi-zones :
+
+```yaml
+topologySpreadConstraints:
+
+- maxSkew: 1
+
+  topologyKey: topology.kubernetes.io/zone
+
+  whenUnsatisfiable: DoNotSchedule
+
+  labelSelector:
+    matchLabels:
+      app: nginx-ha
+```
+
+Résultat :
+
+```text
+Zone-A : 2 Pods
+Zone-B : 2 Pods
+Zone-C : 2 Pods
+```
+
+---
+
+## Association avec HPA
+
+Lorsque le HPA augmente le nombre de Pods :
+
+```text
+HPA
+ │
+ ▼
+Création de nouveaux Pods
+ │
+ ▼
+TopologySpreadConstraints
+ │
+ ▼
+Répartition équilibrée des Pods
+```
+
+Exemple :
+
+```text
+Avant HPA
+
+Node-A : 1 Pod
+Node-B : 1 Pod
+
+Après Scale Out
+
+Node-A : 3 Pods
+Node-B : 3 Pods
+Node-C : 2 Pods
+```
+
+Le Scheduler respecte les contraintes définies.
+
+---
+
+## Différence avec Pod Anti-Affinity
+
+### Pod Anti-Affinity
+
+Empêche deux Pods similaires d'être placés ensemble.
+
+```yaml
+podAntiAffinity:
+```
+
+Exemple :
+
+```text
+Node-A : Pod-1
+Node-B : Pod-2
+Node-C : Pod-3
+```
+
+---
+
+### Topology Spread Constraints
+
+Cherche à répartir équitablement les Pods.
+
+```yaml
+topologySpreadConstraints:
+```
+
+Exemple :
+
+```text
+Node-A : 2 Pods
+Node-B : 2 Pods
+Node-C : 2 Pods
+```
+
+---
+
+## Bonnes Pratiques
+
+Pour une application critique :
+
+```yaml
+replicas: 6
+```
+
+Combiner :
+
+- HPA
+- Cluster Autoscaler
+- topologySpreadConstraints
+- PodDisruptionBudget
+
+Exemple d'architecture :
+
+```text
+                 Ingress
+                    │
+                    ▼
+
+              Deployment
+                    │
+
+                    ▼
+
+                  HPA
+                    │
+
+                    ▼
+
+     TopologySpreadConstraints
+
+                    │
+
+        ┌───────────┼───────────┐
+        ▼           ▼           ▼
+
+      Node-A      Node-B      Node-C
+       2 Pods      2 Pods      2 Pods
+```
+
+---
+
+## Conclusion
+
+Les `topologySpreadConstraints` permettent de garantir une répartition équilibrée des Pods dans le cluster.
+
+Ils complètent parfaitement :
+
+- HPA (Horizontal Pod Autoscaler)
+- Cluster Autoscaler
+- Pod Anti-Affinity
+- PodDisruptionBudget
+
+et constituent aujourd'hui une bonne pratique pour toute application Kubernetes nécessitant une haute disponibilité.
+
